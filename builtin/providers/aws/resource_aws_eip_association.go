@@ -85,6 +85,25 @@ func resourceAwsEipAssociationCreate(d *schema.ResourceData, meta interface{}) e
 		request.PublicIp = aws.String(v.(string))
 	}
 
+	if request.AllocationId == nil && request.PublicIp != nil {
+		ipRequest := &ec2.DescribeAddressesInput{
+			Filters: []*ec2.Filter{
+				&ec2.Filter{
+					Name:   aws.String("public-ip"),
+					Values: []*string{request.PublicIp},
+				},
+			},
+		}
+
+		response, err := conn.DescribeAddresses(ipRequest)
+		if err != nil {
+			return fmt.Errorf("Error reading EC2 Elastic IP %s: %#v", request.PublicIp, err)
+		}
+
+		request.PublicIp = nil
+		request.AllocationId = response.Addresses[0].AllocationId
+	}
+
 	log.Printf("[DEBUG] EIP association configuration: %#v", request)
 
 	resp, err := conn.AssociateAddress(request)
@@ -119,7 +138,23 @@ func resourceAwsEipAssociationRead(d *schema.ResourceData, meta interface{}) err
 	}
 
 	if response.Addresses == nil || len(response.Addresses) == 0 {
-		return fmt.Errorf("Unable to find EIP Association: %s", d.Id())
+		request := &ec2.DescribeAddressesInput{
+			Filters: []*ec2.Filter{
+				&ec2.Filter{
+					Name:   aws.String("public-ip"),
+					Values: []*string{aws.String(d.Get("public_ip").(string))},
+				},
+			},
+		}
+
+		response, err := conn.DescribeAddresses(request)
+		if err != nil {
+			return fmt.Errorf("Error reading EC2 Elastic IP %s: %#v", d.Get("public_ip").(string), err)
+		}
+
+		if response.Addresses == nil || len(response.Addresses) == 0 {
+			return fmt.Errorf("Unable to find EIP Association: %s", d.Id())
+		}
 	}
 
 	return readAwsEipAssociation(d, response.Addresses[0])
